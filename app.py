@@ -2,7 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
 import os, time, uuid
-from passlib.hash import bcrypt
+from passlib.hash import sha256_crypt as bcrypt
 
 app = Flask(__name__)
 CORS(app)
