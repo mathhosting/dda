@@ -1,13 +1,16 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
-import os, time, uuid, bcrypt
+import os, time, uuid
+from passlib.hash import bcrypt
 
 app = Flask(__name__)
 CORS(app)
 
 # ---------- DATABASE CONNECTION ----------
 DATABASE_URL = os.environ.get("DATABASE_URL")
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL environment variable not set!")
 
 def get_conn():
     return psycopg2.connect(DATABASE_URL)
@@ -33,7 +36,8 @@ def get_user_by_token(token):
 def init_db():
     conn = get_conn()
     cur = conn.cursor()
-    # Users table
+
+    # Create users table if missing
     cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id SERIAL PRIMARY KEY,
@@ -42,12 +46,17 @@ def init_db():
             profile_picture TEXT
         )
     """)
-    # Messages table
+
+    # Ensure columns exist (for safety on old tables)
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS password TEXT;")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS profile_picture TEXT;")
+
+    # Create messages table if missing
     cur.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id SERIAL PRIMARY KEY,
-            from_user INT REFERENCES users(id),
-            to_user INT REFERENCES users(id),
+            from_user INT REFERENCES users(id) ON DELETE CASCADE,
+            to_user INT REFERENCES users(id) ON DELETE CASCADE,
             text TEXT,
             timestamp BIGINT
         )
@@ -68,14 +77,14 @@ def register():
     if not username or not password:
         return {"error": "Username and password required"}, 400
 
-    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt())
+    hashed = bcrypt.hash(password)
 
     conn = get_conn()
     cur = conn.cursor()
     try:
         cur.execute(
             "INSERT INTO users (username, password, profile_picture) VALUES (%s,%s,%s) RETURNING id, username, profile_picture",
-            (username, hashed.decode(), profile_picture)
+            (username, hashed, profile_picture)
         )
         user = cur.fetchone()
         conn.commit()
@@ -103,9 +112,7 @@ def login():
     cur.close()
     conn.close()
 
-    if not user:
-        return {"error": "Invalid username or password"}, 400
-    if not bcrypt.checkpw(password.encode(), user[1].encode()):
+    if not user or not bcrypt.verify(password, user[1]):
         return {"error": "Invalid username or password"}, 400
 
     token = str(uuid.uuid4())
@@ -165,7 +172,7 @@ def send_message():
     conn.close()
     return {"status": "ok"}
 
-# ---------- GET MESSAGES BETWEEN TWO USERS ----------
+# ---------- GET MESSAGES ----------
 @app.get("/messages")
 def get_messages():
     token = request.headers.get("Authorization")
@@ -213,7 +220,6 @@ def delete_message(msg_id):
 
     conn = get_conn()
     cur = conn.cursor()
-    # Only allow deleting messages sent by this user
     cur.execute("DELETE FROM messages WHERE id=%s AND from_user=%s", (msg_id, user['id']))
     conn.commit()
     cur.close()
