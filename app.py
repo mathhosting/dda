@@ -1,25 +1,42 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
+import psycopg2
+import os
 import time
 
 app = Flask(__name__)
-CORS(app)  # Allow frontend to call API
+CORS(app)
 
-messages = []
+# Get DB URL from environment variable or use your string
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
-@app.post("/send")
-def send_message():
-    data = request.json
-    text = data.get("text", "").strip()
-    if not text:
-        return {"status": "error", "msg": "Empty message"}, 400
+def get_conn():
+    return psycopg2.connect(DATABASE_URL)
 
-    messages.append({"text": text, "time": int(time.time() * 1000)})
-    return {"status": "ok"}
+# Initialize tables if they don't exist
+def init_db():
+    conn = get_conn()
+    cur = conn.cursor()
+    # Users table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        username TEXT UNIQUE NOT NULL,
+        profile_picture TEXT
+    )
+    """)
+    # Messages table
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS messages (
+        id SERIAL PRIMARY KEY,
+        from_user INT REFERENCES users(id),
+        to_user INT REFERENCES users(id),
+        text TEXT,
+        timestamp BIGINT
+    )
+    """)
+    conn.commit()
+    cur.close()
+    conn.close()
 
-@app.get("/messages")
-def get_messages():
-    return jsonify(messages)
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)  # Render uses $PORT, will override
+init_db()
